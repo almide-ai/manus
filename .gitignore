@@ -1,0 +1,5 @@
+# build artifacts
+/manus
+*.almdi
+/target/
+.almide-cache/

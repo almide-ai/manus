@@ -43,8 +43,8 @@ effect fn screen_size() -> Result[Size, String] = {
   let raw = sh("osascript -e 'tell application \"Finder\" to get bounds of window of desktop'")!
   let parts = list.map(string.split(string.trim(raw), ","), (p) => string.trim(p))
   guard list.len(parts) >= 4 else err("cannot parse screen bounds: ${raw}")
-  let w = int.parse(list.get_or(parts, 2, "0"))!
-  let h = int.parse(list.get_or(parts, 3, "0"))!
+  let w = int.parse(list.get(parts, 2) ?? "0")!
+  let h = int.parse(list.get(parts, 3) ?? "0")!
   ok(Size { w: w, h: h })
 }
 
@@ -59,38 +59,38 @@ effect fn screenshot(sz: Size) -> Result[String, String] = {
 
 // ── JSON content-block builders ──
 fn text_block(t: String) -> Value =
-  json.object([("type", json.from_string("text")), ("text", json.from_string(t))])
+  value.object([("type", value.string("text")), ("text", value.string(t))])
 
 fn image_block(b64: String) -> Value =
-  json.object([
-    ("type", json.from_string("image")),
-    ("source", json.object([
-      ("type", json.from_string("base64")),
-      ("media_type", json.from_string("image/png")),
-      ("data", json.from_string(b64)),
+  value.object([
+    ("type", value.string("image")),
+    ("source", value.object([
+      ("type", value.string("base64")),
+      ("media_type", value.string("image/png")),
+      ("data", value.string(b64)),
     ])),
   ])
 
 fn msg(role: String, content: Value) -> Value =
-  json.object([("role", json.from_string(role)), ("content", content)])
+  value.object([("role", value.string(role)), ("content", content)])
 
 fn computer_tool(sz: Size) -> Value =
-  json.object([
-    ("type", json.from_string(TOOL_TYPE)),
-    ("name", json.from_string("computer")),
-    ("display_width_px", json.from_int(sz.w)),
-    ("display_height_px", json.from_int(sz.h)),
-    ("display_number", json.from_int(1)),
+  value.object([
+    ("type", value.string(TOOL_TYPE)),
+    ("name", value.string("computer")),
+    ("display_width_px", value.int(sz.w)),
+    ("display_height_px", value.int(sz.h)),
+    ("display_number", value.int(1)),
   ])
 
 // ── action helpers ──
 fn getf(input: Value, key: String) -> String =
-  json.get_string(input, key) |> option.unwrap_or("")
+  value.get_string(input, key) |> option.unwrap_or("")
 
 fn coord(input: Value) -> (Int, Int) = {
-  let xs = json.get_array(input, "coordinate") |> option.unwrap_or([])
-  let x = list.get(xs, 0) |> option.flat_map((v) => json.as_int(v)) |> option.unwrap_or(0)
-  let y = list.get(xs, 1) |> option.flat_map((v) => json.as_int(v)) |> option.unwrap_or(0)
+  let xs = value.get_array(input, "coordinate") |> option.unwrap_or([])
+  let x = list.get(xs, 0) |> option.flat_map((v) => value.as_int(v)?) |> option.unwrap_or(0)
+  let y = list.get(xs, 1) |> option.flat_map((v) => value.as_int(v)?) |> option.unwrap_or(0)
   (x, y)
 }
 
@@ -122,7 +122,7 @@ fn key_args(combo: String) -> List[String] = {
   let parts = string.split(combo, "+")
   let n = list.len(parts)
   let mods = list.take(parts, n - 1) |> list.map(one_modifier) |> list.filter((m) => m != "")
-  let key = list.get_or(parts, n - 1, "")
+  let key = list.get(parts, n - 1) ?? ""
   let downs = list.map(mods, (m) => "kd:" + m)
   let ups = list.map(list.reverse(mods), (m) => "ku:" + m)
   downs + key_press(key) + ups
@@ -130,11 +130,11 @@ fn key_args(combo: String) -> List[String] = {
 
 effect fn shot_result(sz: Size) -> Result[Value, String] = {
   let b = screenshot(sz)!
-  ok(json.array([image_block(b)]))
+  ok(value.array([image_block(b)]))
 }
 
 effect fn text_result(s: String) -> Result[Value, String] =
-  ok(json.array([text_block(s)]))
+  ok(value.array([text_block(s)]))
 
 // Execute one computer action; return the tool_result content array.
 effect fn do_action(input: Value, sz: Size) -> Result[Value, String] = {
@@ -151,7 +151,7 @@ effect fn do_action(input: Value, sz: Size) -> Result[Value, String] = {
     "mouse_move" => { let _ = click(["m:${x},${y}"])! ; shot_result(sz) },
     "type" => { let _ = click(["t:" + getf(input, "text")])! ; shot_result(sz) },
     "key" => { let _ = click(key_args(getf(input, "text")))! ; shot_result(sz) },
-    "wait" => { process.sleep(1000) ; shot_result(sz) },
+    "wait" => { env.sleep_ms(int.max(1000, 0)) ; shot_result(sz) },
     "cursor_position" => { let p = click(["p:."])! ; text_result(string.trim(p)) },
     _ => text_result("action '${action}' is not supported by manus v${VERSION}"),
   }
@@ -159,15 +159,15 @@ effect fn do_action(input: Value, sz: Size) -> Result[Value, String] = {
 
 // ── response parsing ──
 fn block_type(b: Value) -> String =
-  json.get_string(b, "type") |> option.unwrap_or("")
+  value.get_string(b, "type") |> option.unwrap_or("")
 
 fn find_tool_use(content: List[Value]) -> Option[Value] =
   list.find(content, (b) => block_type(b) == "tool_use")
 
 effect fn print_text(content: List[Value]) -> Unit = {
   let texts = content |> list.filter_map((b) =>
-    if block_type(b) == "text" then json.get_string(b, "text") else none)
-  let joined = string.trim(string.join(texts, ""))
+    if block_type(b) == "text" then value.get_string(b, "text") else none)
+  let joined = string.trim(list.join(texts, ""))
   io.print(if joined == "" then "" else "\n[claude] ${joined}\n")
   ()
 }
@@ -181,12 +181,12 @@ effect fn require_env(key: String) -> Result[String, String] =
 
 effect fn call_api(model: String, sz: Size, messages: List[Value]) -> Result[Value, String] = {
   let api_key = require_env("ANTHROPIC_API_KEY")!
-  let body = json.object([
-    ("model", json.from_string(model)),
-    ("max_tokens", json.from_int(4096)),
-    ("system", json.from_string(SYSTEM_PROMPT)),
-    ("tools", json.array([computer_tool(sz)])),
-    ("messages", json.array(messages)),
+  let body = value.object([
+    ("model", value.string(model)),
+    ("max_tokens", value.int(4096)),
+    ("system", value.string(SYSTEM_PROMPT)),
+    ("tools", value.array([computer_tool(sz)])),
+    ("messages", value.array(messages)),
   ])
   let headers = [
     "x-api-key": api_key,
@@ -194,11 +194,11 @@ effect fn call_api(model: String, sz: Size, messages: List[Value]) -> Result[Val
     "anthropic-beta": BETA,
     "content-type": "application/json",
   ]
-  match http.request("POST", "https://api.anthropic.com/v1/messages", json.stringify(body), headers) {
+  match http.request("POST", "https://api.anthropic.com/v1/messages", json.stringify(body), map.to_list(headers)) {
     err(e) => err("http: ${e}"),
     ok(raw) => match json.parse(raw) {
       err(e) => err("json parse: ${e}"),
-      ok(parsed) => match json.get(parsed, "error") |> option.flat_map((x) => json.get_string(x, "message")) {
+      ok(parsed) => match value.get(parsed, "error") |> option.flat_map((x) => value.get_string(x, "message")) {
         some(m) => err("anthropic api: ${m}"),
         none => ok(parsed),
       },
@@ -210,7 +210,7 @@ effect fn call_api(model: String, sz: Size, messages: List[Value]) -> Result[Val
 effect fn confirm(action: String, input: Value) -> Bool = {
   io.print("[manus] ${action}  ${json.stringify(input)}\n")
   io.print("        run this action? [y/N] ")
-  let ans = string.trim(io.read_line())
+  let ans = string.trim(io.read_line() ?? "")
   ans == "y" or ans == "Y" or ans == "yes"
 }
 
@@ -218,26 +218,26 @@ effect fn confirm(action: String, input: Value) -> Bool = {
 effect fn run(model: String, sz: Size, messages: List[Value], step: Int, yolo: Bool) -> Result[Unit, String] = {
   guard step < MAX_STEPS else { io.print("\n[manus] step limit reached.\n") ; ok(()) }
   let resp = call_api(model, sz, messages)!
-  let content = json.get_array(resp, "content") |> option.unwrap_or([])
-  let stop = json.get_string(resp, "stop_reason") |> option.unwrap_or("")
+  let content = value.get_array(resp, "content") |> option.unwrap_or([])
+  let stop = value.get_string(resp, "stop_reason") |> option.unwrap_or("")
   print_text(content)
   match find_tool_use(content) {
     none => { io.print("\n[manus] finished (${stop}).\n") ; ok(()) },
     some(tu) => {
       let id = getf(tu, "id")
-      let input = json.get(tu, "input") |> option.unwrap_or(json.null())
+      let input = value.get(tu, "input") |> option.unwrap_or(value.null())
       let action = getf(input, "action")
       let go = if yolo then true else confirm(action, input)
       if not go then { io.print("[manus] stopped by user.\n") ; ok(()) }
       else {
         let result_content = do_action(input, sz)!
-        let assistant = msg("assistant", json.array(content))
-        let tr = json.object([
-          ("type", json.from_string("tool_result")),
-          ("tool_use_id", json.from_string(id)),
+        let assistant = msg("assistant", value.array(content))
+        let tr = value.object([
+          ("type", value.string("tool_result")),
+          ("tool_use_id", value.string(id)),
           ("content", result_content),
         ])
-        let user = msg("user", json.array([tr]))
+        let user = msg("user", value.array([tr]))
         run(model, sz, messages + [assistant, user], step + 1, yolo)
       }
     },
@@ -245,8 +245,8 @@ effect fn run(model: String, sz: Size, messages: List[Value], step: Int, yolo: B
 }
 
 effect fn main() -> Result[Unit, String] = {
-  let argv = process.args()
-  let joined = string.trim(string.join(list.drop(argv, 1), " "))
+  let argv = env.args()
+  let joined = string.trim(list.join(argv, " "))
   let task = if joined == "" then env.get("MANUS_TASK") |> option.unwrap_or("") else joined
   guard task != "" else {
     io.print("manus v${VERSION} — a Claude computer-use agent for macOS\n\n")
@@ -260,7 +260,7 @@ effect fn main() -> Result[Unit, String] = {
   io.print("manus v${VERSION}  model=${model}  screen=${int.to_string(sz.w)}x${int.to_string(sz.h)}  yolo=${if yolo then "on" else "off"}\n")
   io.print("task: ${task}\n")
   let shot = screenshot(sz)!
-  let first = msg("user", json.array([text_block("Task: ${task}"), image_block(shot)]))
+  let first = msg("user", value.array([text_block("Task: ${task}"), image_block(shot)]))
   run(model, sz, [first], 0, yolo)
 }
 
@@ -274,14 +274,14 @@ test "one_modifier normalizes aliases" {
 }
 
 test "key_args maps modifiers and named keys" {
-  assert_eq(string.join(key_args("cmd+a"), " "), "kd:cmd t:a ku:cmd")
-  assert_eq(string.join(key_args("ctrl+shift+t"), " "), "kd:ctrl kd:shift t:t ku:shift ku:ctrl")
-  assert_eq(string.join(key_args("Return"), " "), "kp:return")
-  assert_eq(string.join(key_args("Left"), " "), "kp:arrow-left")
+  assert_eq(list.join(key_args("cmd+a"), " "), "kd:cmd t:a ku:cmd")
+  assert_eq(list.join(key_args("ctrl+shift+t"), " "), "kd:ctrl kd:shift t:t ku:shift ku:ctrl")
+  assert_eq(list.join(key_args("Return"), " "), "kp:return")
+  assert_eq(list.join(key_args("Left"), " "), "kp:arrow-left")
 }
 
 test "coord extracts x,y from the coordinate array" {
-  let input = json.object([("coordinate", json.array([json.from_int(12), json.from_int(34)]))])
+  let input = value.object([("coordinate", value.array([value.int(12), value.int(34)]))])
   assert_eq(coord(input).0, 12)
   assert_eq(coord(input).1, 34)
 }

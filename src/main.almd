@@ -220,14 +220,14 @@ effect fn run(model: String, sz: Size, messages: List[Value], step: Int, yolo: B
   let resp = call_api(model, sz, messages)!
   let content = value.get_array(resp, "content") |> option.unwrap_or([])
   let stop = value.get_string(resp, "stop_reason") |> option.unwrap_or("")
-  print_text(content)
+  print_text(content)!
   match find_tool_use(content) {
     none => { io.print("\n[manus] finished (${stop}).\n") ; ok(()) },
     some(tu) => {
       let id = getf(tu, "id")
       let input = value.get(tu, "input") |> option.unwrap_or(value.null())
       let action = getf(input, "action")
-      let go = if yolo then true else confirm(action, input)
+      let go = if yolo then true else confirm(action, input)!
       if not go then { io.print("[manus] stopped by user.\n") ; ok(()) }
       else {
         let result_content = do_action(input, sz)!
